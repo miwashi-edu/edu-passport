@@ -74,6 +74,19 @@ module.exports = app;
 EOF
 ```
 
+### ./src/auth/users.js
+
+```js
+cat > ./src/auth/users.js << 'EOF'
+const bcrypt = require("bcrypt");
+const users = [
+    { id: 1, email: 'user@example.com', password: bcrypt.hashSync('password', 10), role: 'user' }
+];  // Example user store
+
+module.exports = users;
+EOF
+```
+
 ### ./src/auth/passport_config.js
 
 ```js
@@ -81,27 +94,37 @@ cat > ./src/auth/passport_config.js << 'EOF'
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcrypt');
+const users = require('./users');
 
-// Example User Model
-const users = [
-  { id: 1, email: 'user@example.com', password: 'hashedpassword', role: 'user' } // Replace hashedpassword with an actual hashed password
-];
 
-passport.use(new LocalStrategy(
-  { usernameField: 'email' },
-  (email, password, done) => {
-    const user = users.find(u => u.email === email);
-    if (!user) return done(null, false, { message: 'User not found' });
-    
-    const isValid = bcrypt.compareSync(password, user.password);
-    return isValid ? done(null, user) : done(null, false, { message: 'Incorrect Password' });
-  }
+
+passport.use(new LocalStrategy({
+        usernameField: 'email',
+        passwordField: 'password'
+    },
+    async (email, password, done) => {
+        const user = users.find(u => u.email === email);
+        if (user == null) {
+            return done(null, false, { message: 'No user with that email' });
+        }
+
+        try {
+            if (await bcrypt.compare(password, user.password)) {
+                return done(null, user);
+            } else {
+                return done(null, false, { message: 'Password incorrect' });
+            }
+        } catch (e) {
+            return done(e);
+        }
+    }
 ));
 
+module.exports = passport;
 EOF
 ```
 
-## ./src/routes/auth_routes.js
+### ./src/routes/auth_routes.js
 
 ```js
 cat > ./src/routes/auth_routes.js << 'EOF'
@@ -112,6 +135,7 @@ const bcrypt = require('bcrypt');
 const { check, validationResult } = require('express-validator');
 
 const router = express.Router();
+const users = require('../auth/users');
 
 router.post('/login',
   [
@@ -152,33 +176,21 @@ router.post('/register',
   }
 );
 
+router.get('/users', (req, res) => {
+  // Creating a user list without exposing passwords
+  const userList = users.map(user => {
+    return { id: user.id, email: user.email, password: user.password };
+  });
+  res.json(userList);
+});
+
 module.exports = router;
 EOF
 ```
 
-## Test it 
+### Test it 
 
 ```bash
-# Command line URL
-# -c --cookie-jar
-# -b --cookie
-# -d urlencoded data
-
-# Log in and save cookies to a file
-curl -X POST -c cookies.txt -d "username=user@example.com&password=password" http://localhost:3001/login
-
-# Attempt access to protected resource
-curl -X GET http://localhost:3001/protected
-
-# Use the saved cookies in subsequent requests
-curl -X GET -b cookies.txt http://localhost:3001/protected
-
-curl -X POST http://localhost:3001/logout \
-     -b cookies.txt \
-     -c cookies.txt
-
-# Use the saved cookies in subsequent requests
-curl -X GET -b cookies.txt http://localhost:3001/protected
 
 curl -X POST \
   http://localhost:3001/auth/register \
@@ -541,14 +553,3 @@ cat > ./src/App.css << EOF
 }
 EOF
 ```
-
-
-
-
-
-
-
-> Ensure to hash your passwords when they’re stored, and only store the hashed versions. bcrypt can be used to hash passwords before they are saved to your database.
-Always secure your application by moving sensitive information like secret keys or database credentials to environment variables and never expose them in the code.
-Ensure thorough testing, especially for authentication functionalities, to make sure that security is not compromised.
-Ensure your application uses HTTPS to securely transmit data, especially credentials, between client and server.
